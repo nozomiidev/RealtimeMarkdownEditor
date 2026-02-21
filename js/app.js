@@ -232,6 +232,11 @@ class App {
             this._showResetDialog();
         });
 
+        // GigaReset
+        document.getElementById('ribbon-gigareset')?.addEventListener('click', () => {
+            this._showGigaResetDialog();
+        });
+
         // Help
         document.getElementById('ribbon-help')?.addEventListener('click', () => {
             this._showHelp();
@@ -251,6 +256,9 @@ class App {
         });
         document.getElementById('mob-reset')?.addEventListener('click', () => {
             this._showResetDialog();
+        });
+        document.getElementById('mob-gigareset')?.addEventListener('click', () => {
+            this._showGigaResetDialog();
         });
         document.getElementById('mob-help')?.addEventListener('click', () => {
             this._showHelp();
@@ -450,26 +458,40 @@ class App {
         }
     }
 
-    // ========== Save Preview as PDF ==========
-
     _savePreviewAsPdf() {
+        if (this._isMobileDevice()) {
+            this.showToast('Use the print dialog to save as PDF.', 'info');
+        }
+        this._desktopPrintPdf();
+    }
+
+    /**
+     * Detect mobile device using viewport + UA heuristics
+     */
+    _isMobileDevice() {
+        const narrowViewport = window.innerWidth <= 768;
+        const touchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        const mobileUA = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        return narrowViewport && (touchDevice || mobileUA);
+    }
+
+    /**
+     * Open new window with clean preview HTML and trigger print dialog.
+     * Used for both desktop and mobile PDF export.
+     */
+    _desktopPrintPdf() {
         this.showToast(t('toast.pdfInfo'), 'info');
 
-        // Get rendered preview HTML
         const previewEl = document.querySelector('.preview-content');
         if (!previewEl) return;
 
         const previewHtml = previewEl.innerHTML;
-        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-
-        // Open a new clean window with ONLY the preview content
         const printWin = window.open('', '_blank');
         if (!printWin) {
             this.showToast('Pop-up blocked. Please allow pop-ups for this site.', 'error');
             return;
         }
 
-        // Detect if content has MathJax or Mermaid
         const hasMath = previewHtml.includes('math-inline') || previewHtml.includes('math-display');
 
         printWin.document.write(`<!DOCTYPE html>
@@ -555,7 +577,6 @@ ${hasMath ? '<script>window.MathJax={tex:{inlineMath:[["\\\\(","\\\\)"]],display
 <div class="print-content">${previewHtml}</div>
 <script>
 (async function() {
-  // Wait for all images to load
   const imgs = document.querySelectorAll('img');
   if (imgs.length > 0) {
     await Promise.all(Array.from(imgs).map(img => {
@@ -563,16 +584,12 @@ ${hasMath ? '<script>window.MathJax={tex:{inlineMath:[["\\\\(","\\\\)"]],display
       return new Promise(r => { img.onload = r; img.onerror = r; });
     }));
   }
-  // Wait for MathJax typesetting
   if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
     try { await MathJax.typesetPromise(); } catch(e) { console.warn('MathJax error:', e); }
   }
-  // Small delay for rendering to settle, then print
   setTimeout(function() {
     window.focus();
     window.print();
-    // Close after printing (or cancel)
-    setTimeout(function() { window.close(); }, 500);
   }, 300);
 })();
 </script>
@@ -648,6 +665,112 @@ ${hasMath ? '<script>window.MathJax={tex:{inlineMath:[["\\\\(","\\\\)"]],display
             // Fallback: force reload anyway
             location.replace(location.pathname);
         }
+    }
+
+    // ========== GigaReset (Nuclear Wipe) ==========
+
+    _showGigaResetDialog() {
+        const overlay = document.getElementById('gigareset-dialog-overlay');
+        if (!overlay) return;
+        overlay.classList.add('visible');
+
+        const cancelBtn = document.getElementById('gigareset-cancel');
+        const confirmBtn = document.getElementById('gigareset-confirm');
+
+        const cleanup = () => {
+            overlay.classList.remove('visible');
+            cancelBtn?.removeEventListener('click', onCancel);
+            confirmBtn?.removeEventListener('click', onConfirm);
+        };
+
+        const onCancel = () => cleanup();
+        const onConfirm = async () => {
+            cleanup();
+            await this._gigaReset();
+        };
+
+        cancelBtn?.addEventListener('click', onCancel);
+        confirmBtn?.addEventListener('click', onConfirm);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) cleanup();
+        }, { once: true });
+    }
+
+    async _gigaReset() {
+        this.showToast('Erasing all data…', 'info');
+
+        try {
+            // 1. Clear Web Storage
+            localStorage.clear();
+            sessionStorage.clear();
+
+            // 2. Clear IndexedDB — enumerate all databases and delete each
+            if (this.fileManager?.db) {
+                this.fileManager.db.close();
+            }
+            if (indexedDB.databases) {
+                try {
+                    const dbs = await indexedDB.databases();
+                    await Promise.all(dbs.map(db => new Promise((resolve) => {
+                        const req = indexedDB.deleteDatabase(db.name);
+                        req.onsuccess = () => resolve();
+                        req.onerror = () => resolve();
+                        req.onblocked = () => resolve();
+                    })));
+                } catch (e) {
+                    console.warn('GigaReset: indexedDB.databases() failed:', e);
+                }
+            }
+            // Always try known DB name as fallback
+            await new Promise((resolve) => {
+                const req = indexedDB.deleteDatabase('realtimemd-workspace');
+                req.onsuccess = () => resolve();
+                req.onerror = () => resolve();
+                req.onblocked = () => resolve();
+            });
+
+            // 3. Clear Cache Storage (Service Worker caches)
+            if ('caches' in window) {
+                try {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map(key => caches.delete(key)));
+                } catch (e) {
+                    console.warn('GigaReset: caches clear failed:', e);
+                }
+            }
+
+            // 4. Clear Service Worker registrations
+            if ('serviceWorker' in navigator) {
+                try {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(regs.map(r => r.unregister()));
+                } catch (e) {
+                    console.warn('GigaReset: SW unregister failed:', e);
+                }
+            }
+
+            // 5. Clear cookies (best-effort)
+            try {
+                const cookies = document.cookie.split(';');
+                for (const cookie of cookies) {
+                    const name = cookie.split('=')[0].trim();
+                    if (!name) continue;
+                    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+                    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=${location.pathname}`;
+                }
+            } catch (e) {
+                console.warn('GigaReset: cookie clear failed:', e);
+            }
+
+            console.log('GigaReset: all clearable data erased. Some browser-managed data may remain due to platform restrictions.');
+
+        } catch (e) {
+            console.error('GigaReset error:', e);
+        }
+
+        // 6. Hard reload — always execute even if some steps failed
+        location.replace(location.pathname + location.search);
     }
 
     // ========== Help Panel ==========
