@@ -384,7 +384,7 @@ class App {
             try {
                 mermaid.initialize({
                     startOnLoad: false,
-                    theme: next === 'light' ? 'default' : 'dark',
+                    theme: next === 'dark' ? 'default' : 'light',
                     securityLevel: 'strict'
                 });
             } catch (e) { /* ignore */ }
