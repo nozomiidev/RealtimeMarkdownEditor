@@ -368,7 +368,7 @@ class App {
 
     _initTheme() {
         const saved = localStorage.getItem(THEME_KEY);
-        const theme = (saved === 'light' || saved === 'dark') ? saved : 'light'; // ← ここ
+        const theme = (saved === 'light' || saved === 'dark') ? saved : 'light';
         document.documentElement.setAttribute('data-theme', theme);
     }
 
@@ -384,7 +384,7 @@ class App {
             try {
                 mermaid.initialize({
                     startOnLoad: false,
-                    theme: next === 'dark' ? 'default' : 'light',
+                    theme: next === 'light' ? 'default' : 'dark',
                     securityLevel: 'strict'
                 });
             } catch (e) { /* ignore */ }
